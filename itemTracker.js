@@ -3,8 +3,6 @@ const cheerio = require("cheerio");
 const { ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder } = require("discord.js");
 const moment = require("moment-timezone");
 
-const latestData = new WeakMap();
-
 async function fetchNextData(options) {
     const url = "https://api.zyte.com/v1/extract";
     console.log(options)
@@ -43,7 +41,6 @@ async function fetchNextData(options) {
     }
 }
 
-// Fonction pour vérifier la distance entre deux points
 async function checkDistance(origin, destination) {
     const url = `https://maps.googleapis.com/maps/api/distancematrix/json?units=metric&origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(destination)}&key=AIzaSyDVpX2-v2O1VhGO1TJSHx8K8f2p1iuGd8A`;
 
@@ -61,7 +58,6 @@ async function checkDistance(origin, destination) {
     }
 }
 
-// Fonction pour envoyer les données à Discord
 async function sendToDiscord(channel, options, activeSearches) {
     console.log("new try")
     if (!activeSearches.has(channel.id)) return;
@@ -75,12 +71,13 @@ async function sendToDiscord(channel, options, activeSearches) {
     if (!adsData || adsData.length === 0) return;
     console.log("HERE 3")
     const latestAd = adsData[0];
-    if (latestData.get(channel) === latestAd.list_id) {
+    const storedListId = await db.get(`latestData_${channel.id}`);
+    if (storedListId === latestAd.list_id) {
         await reload(channel, options, activeSearches);
         return;
     }
 
-    latestData.set(channel, latestAd.list_id);
+    await db.set(`latestData_${channel.id}`, latestAd.list_id);
 
     const {
         subject, body, list_id, index_date, price, location, images, attributes
@@ -135,12 +132,10 @@ async function sendToDiscord(channel, options, activeSearches) {
 
 }
 
-// Fonction pour formater le prix
 function formatPrice(price) {
     return price?.toString()?.replace(/\B(?=(\d{3})+(?!\d))/g, " ") || price;
 }
 
-// Fonction pour recharger les données
 async function reload(channel, options, activeSearches) {
     try {
         await delay(45000);
@@ -155,12 +150,10 @@ async function reload(channel, options, activeSearches) {
     }
 }
 
-// Fonction pour convertir une date en format UNIX
 function toUnix(dateString) {
     return moment.tz(dateString, 'Europe/Paris').unix() || 0;
 }
 
-// Fonction pour introduire un délai
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
