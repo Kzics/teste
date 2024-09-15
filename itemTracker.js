@@ -58,78 +58,83 @@ async function checkDistance(origin, destination) {
     }
 }
 
-// Fonction principale pour envoyer les données à Discord
 async function sendToDiscord(channel, options, activeSearches) {
     if (!activeSearches.has(channel.id)) return;
 
-    const brutData = await fetchNextData(options);
-    if (!brutData) return;
+    try {
+        const brutData = await fetchNextData(options);
+        if (!brutData) {
+            await reload(channel, options, activeSearches);
+            return;
+        }
 
-    const adsData = brutData.props.pageProps.searchData.ads;
-    if (!adsData || adsData.length === 0) return;
-    const latestAd = adsData[0];
+        const adsData = brutData.props.pageProps.searchData.ads;
+        if (!adsData || adsData.length === 0) {
+            await reload(channel, options, activeSearches);
+            return;
+        }
+        const latestAd = adsData[0];
 
-    // Vérification si l'annonce a déjà été envoyée, sinon on passe à la suivante
-    const storedListId = await db.get(`latestData_${channel.id}`);
-    if (storedListId === latestAd.list_id) {
+        const storedListId = await db.get(`latestData_${channel.id}`);
+        if (storedListId === latestAd.list_id) {
+            await reload(channel, options, activeSearches);
+            return;
+        }
+
+        await db.set(`latestData_${channel.id}`, latestAd.list_id);
+
+        const {
+            subject, body, list_id, index_date, price, location, images, attributes
+        } = latestAd;
+
+        const annonceButton = new ButtonBuilder()
+            .setURL(`https://www.leboncoin.fr/ad/voitures/${list_id}`)
+            .setLabel("🔎 Annonce")
+            .setStyle(ButtonStyle.Link);
+
+        const sendMessageButton = new ButtonBuilder()
+            .setURL(`https://www.leboncoin.fr/reply/${list_id}`)
+            .setLabel("📩 Envoyer un message")
+            .setStyle(ButtonStyle.Link);
+
+        const addFavoriteButton = new ButtonBuilder()
+            .setCustomId(`favorite_${list_id}`)
+            .setLabel("⭐ Ajouter favoris")
+            .setStyle(ButtonStyle.Primary);
+
+        const getAttributeValue = (key) => attributes.find(attr => attr.key === key)?.value_label || 'Non spécifié';
+
+        const distanceValue = await checkDistance("Sevran", location.city);
+
+        const embeds = (images?.urls || []).slice(0, 5).map((url, index) => new EmbedBuilder()
+            .setTitle(subject)
+            .setURL(`https://www.leboncoin.fr/voitures/${list_id}`)
+            .setTimestamp(new Date(index_date))
+            .setColor(3066993)
+            .setImage(url || 'https://via.placeholder.com/150')
+            .addFields(
+                { name: "Prix", value: `${formatPrice(price)}€`, inline: true },
+                { name: "Ville", value: `${location.city_label}`, inline: true },
+                { name: "Modèle", value: `${getAttributeValue("u_car_model")}`, inline: true },
+                { name: "Année modèle", value: `${getAttributeValue("regdate")}`, inline: true },
+                { name: "Kilométrage", value: `${getAttributeValue("mileage")}`, inline: true },
+                { name: "Carburant", value: `${getAttributeValue("fuel")}`, inline: true },
+                { name: "Mise en ligne", value: `<t:${toUnix(index_date)}:R>`, inline: true },
+                { name: "Distance", value: `${distanceValue.distance} (${distanceValue.time})`, inline: true }
+            ));
+
+        let comp = new ActionRowBuilder().setComponents(sendMessageButton, annonceButton, addFavoriteButton);
+
+        await channel.send({ embeds, components: [comp] });
+
         await reload(channel, options, activeSearches);
-        return;
-    }
-
-    // Mise à jour dans la base de données avec le nouvel ID
-    await db.set(`latestData_${channel.id}`, latestAd.list_id);
-
-    const {
-        subject, body, list_id, index_date, price, location, images, attributes
-    } = latestAd;
-
-    const annonceButton = new ButtonBuilder()
-        .setURL(`https://www.leboncoin.fr/ad/voitures/${list_id}`)
-        .setLabel("🔎 Annonce")
-        .setStyle(ButtonStyle.Link);
-
-    const sendMessageButton = new ButtonBuilder()
-        .setURL(`https://www.leboncoin.fr/reply/${list_id}`)
-        .setLabel("📩 Envoyer un message")
-        .setStyle(ButtonStyle.Link);
-
-    const addFavoriteButton = new ButtonBuilder()
-        .setCustomId(`favorite_${list_id}`)
-        .setLabel("⭐ Ajouter favoris")
-        .setStyle(ButtonStyle.Primary);
-
-    const getAttributeValue = (key) => attributes.find(attr => attr.key === key)?.value_label || 'Non spécifié';
-
-    // Vérification de la distance entre l'origine et la ville de l'annonce
-    const distanceValue = await checkDistance("Sevran", location.city);
-
-    // Création des embeds pour Discord
-    const embeds = (images?.urls || []).slice(0, 5).map((url, index) => new EmbedBuilder()
-        .setTitle(subject)
-        .setURL(`https://www.leboncoin.fr/voitures/${list_id}`)
-        .setTimestamp(new Date(index_date))
-        .setColor(3066993)
-        .setImage(url || 'https://via.placeholder.com/150')
-        .addFields(
-            { name: "Prix", value: `${formatPrice(price)}€`, inline: true },
-            { name: "Ville", value: `${location.city_label}`, inline: true },
-            { name: "Modèle", value: `${getAttributeValue("u_car_model")}`, inline: true },
-            { name: "Année modèle", value: `${getAttributeValue("regdate")}`, inline: true },
-            { name: "Kilométrage", value: `${getAttributeValue("mileage")}`, inline: true },
-            { name: "Carburant", value: `${getAttributeValue("fuel")}`, inline: true },
-            { name: "Mise en ligne", value: `<t:${toUnix(index_date)}:R>`, inline: true },
-            { name: "Distance", value: `${distanceValue.distance} (${distanceValue.time})`, inline: true }
-        ));
-
-    let comp = new ActionRowBuilder().setComponents(sendMessageButton, annonceButton, addFavoriteButton);
-
-    await channel.send({ embeds, components: [comp] });
-
-    // Nettoyage des variables après envoi du message
-    await reload(channel, options, activeSearches).then(() => {
+    } catch (error) {
+        console.error(`Error in sendToDiscord for channel ${channel.id}:`, error);
+    } finally {
+        // Nettoyage des variables après envoi du message
         options = null;
         comp = null;
-    });
+    }
 }
 
 // Formatage du prix

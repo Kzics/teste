@@ -8,17 +8,30 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 client.once('ready', async () => {
     console.log('Bot is ready!');
     const trackedChannels = await db.get('trackedChannels') || {};
-    const activeSearches = new Set(Object.keys(trackedChannels));
+    const activeSearches = new Map(Object.entries(trackedChannels));
 
-    for (const [channelId, info] of Object.entries(trackedChannels)) {
-        const channel = await client.channels.fetch(channelId).catch(() => null);
-        if (channel) {
-            await sendToDiscord(channel, info, activeSearches);
-        } else {
-            console.log(`Channel ${channelId} not found, removing from tracked channels.`);
-            await cleanUpChannel(channelId);
+    const promises = [];
+
+    for (const [channelId, info] of activeSearches) {
+        try {
+            const channel = await client.channels.fetch(channelId).catch(() => null);
+            if (channel) {
+                // Ajoute la promesse au tableau
+                promises.push(sendToDiscord(channel, info, activeSearches).catch(error => {
+                    console.error(`Error in sendToDiscord for channel ${channelId}:`, error);
+                }));
+            } else {
+                promises.push(cleanUpChannel(channelId).catch(error => {
+                    console.error(`Error in cleanUpChannel for channel ${channelId}:`, error);
+                }));
+            }
+        } catch (error) {
+            console.error(`Error processing channel ${channelId}:`, error);
         }
     }
+
+    // Attend que toutes les promesses soient résolues
+    await Promise.all(promises);
 });
 
 const cleanUpChannel = async (channelId) => {
@@ -33,7 +46,6 @@ const handleButton = async (interaction) => {
     const embed = new EmbedBuilder();
 
     if (customId.startsWith("previous") || customId.startsWith("next")) {
-        console.log("Navigating pages...");
     } else {
         const favoriteId = generateFavoriteId();
         const favorites = await db.get('favorites') || [];
@@ -94,7 +106,6 @@ client.on('interactionCreate', async interaction => {
             const trackedChannels = await db.get('trackedChannels') || {};
             const activeSearches = new Map(Object.entries(trackedChannels));
 
-            console.log(activeSearches)
 
             await sendToDiscord(channel, { brand, sort, dep, models, price, mileage }, activeSearches)
         } else if (commandName === 'unsearch') {
