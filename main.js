@@ -1,9 +1,8 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { sendToDiscord } = require('./itemTracker');
 require('dotenv').config();
 const db = require("./db");
 
-const token = process.env.DISCORD_TOKEN;
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once('ready', async () => {
@@ -23,12 +22,12 @@ client.once('ready', async () => {
 });
 
 const cleanUpChannel = async (channelId) => {
-    await db.del(`trackedChannels.${channelId}`);
+    await db.delete(`trackedChannels.${channelId}`);
 };
 
 const generateFavoriteId = () => `fav-${Math.random().toString(36).substr(2, 9)}`;
 
-const handleButton = async (interaction) => {
+const handleButton = async (interaction) => {   
     const customId = interaction.customId;
     const listId = customId.split("_")[1];
     const embed = new EmbedBuilder();
@@ -95,7 +94,7 @@ client.on('interactionCreate', async interaction => {
             await sendToDiscord(channel, { brand, sort, dep, models, price, mileage }, new Set(Object.keys(trackedChannels)));
         } else if (commandName === 'unsearch') {
             const channelId = options.getString('channel_id');
-            await db.del(`trackedChannels.${channelId}`);
+            await db.delete(`trackedChannels.${channelId}`);
             const channel = await client.channels.fetch(channelId).catch(() => null);
             if (channel) await channel.delete();
             interaction.editReply({ content: `Le suivi a été arrêté pour le salon : ${channelId}`, ephemeral: true });
@@ -199,4 +198,4 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-client.login(token);
+client.login(process.env.DISCORD_TOKEN);
