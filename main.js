@@ -27,7 +27,7 @@ const cleanUpChannel = async (channelId) => {
 
 const generateFavoriteId = () => `fav-${Math.random().toString(36).substr(2, 9)}`;
 
-const handleButton = async (interaction) => {   
+const handleButton = async (interaction) => {
     const customId = interaction.customId;
     const listId = customId.split("_")[1];
     const embed = new EmbedBuilder();
@@ -91,7 +91,12 @@ client.on('interactionCreate', async interaction => {
 
             await db.set(`trackedChannels.${channel.id}`, { brand, sort, dep, models, price, mileage });
 
-            await sendToDiscord(channel, { brand, sort, dep, models, price, mileage }, new Set(Object.keys(trackedChannels)));
+            const trackedChannels = await db.get('trackedChannels') || {};
+            const activeSearches = new Map(Object.entries(trackedChannels));
+
+            console.log(activeSearches)
+
+            await sendToDiscord(channel, { brand, sort, dep, models, price, mileage }, activeSearches)
         } else if (commandName === 'unsearch') {
             const channelId = options.getString('channel_id');
             await db.delete(`trackedChannels.${channelId}`);

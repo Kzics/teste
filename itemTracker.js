@@ -137,10 +137,9 @@ function formatPrice(price) {
     return price?.toString()?.replace(/\B(?=(\d{3})+(?!\d))/g, " ") || price;
 }
 
-// Fonction pour recharger les données toutes les 45 secondes
 async function reload(channel, options, activeSearches) {
     try {
-        await delay(45000);
+        await delay(20000);
         await sendToDiscord(channel, options, activeSearches);
     } catch (error) {
         console.error('Erreur lors du rechargement :', error.message);
@@ -150,7 +149,6 @@ async function reload(channel, options, activeSearches) {
     }
 }
 
-// Convertit une date en format Unix
 function toUnix(dateString) {
     return moment.tz(dateString, 'Europe/Paris').unix() || 0;
 }
