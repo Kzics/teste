@@ -1,23 +1,18 @@
-const { Client, GatewayIntentBits, Collection, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { sendToDiscord } = require('./itemTracker');
-const fs = require('fs');
 require('dotenv').config();
-const db = require("./db")
+const db = require("./db");
 
 const token = process.env.DISCORD_TOKEN;
-
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-client.commands = new Collection();
 
 client.once('ready', async () => {
     console.log('Bot is ready!');
-    await loadTrackedChannels();
-
     const trackedChannels = await db.get('trackedChannels') || {};
     const activeSearches = new Set(Object.keys(trackedChannels));
 
     for (const [channelId, info] of Object.entries(trackedChannels)) {
-        const channel = client.channels.cache.get(channelId);
+        const channel = await client.channels.fetch(channelId).catch(() => null);
         if (channel) {
             await sendToDiscord(channel, info, activeSearches);
         } else {
@@ -27,18 +22,8 @@ client.once('ready', async () => {
     }
 });
 
-const loadTrackedChannels = async () => {
-    // Load tracked channels from DB if needed
-};
-
-const saveTrackedChannels = async (trackedChannels) => {
-    await db.set('trackedChannels', trackedChannels);
-};
-
 const cleanUpChannel = async (channelId) => {
-    const trackedChannels = await db.get('trackedChannels') || {};
-    delete trackedChannels[channelId];
-    await db.set('trackedChannels', trackedChannels);
+    await db.del(`trackedChannels.${channelId}`);
 };
 
 const generateFavoriteId = () => `fav-${Math.random().toString(36).substr(2, 9)}`;
@@ -52,16 +37,15 @@ const handleButton = async (interaction) => {
         console.log("Navigating pages...");
     } else {
         const favoriteId = generateFavoriteId();
-        let favorites = await db.get('favorites') || [];
+        const favorites = await db.get('favorites') || [];
         if (!favorites.some(fav => fav.listId === listId)) {
             favorites.push({ id: favoriteId, listId, channelId: interaction.channel.id, userId: interaction.user.id });
             await db.set('favorites', favorites);
             embed.setTitle("✅ Annonce ajoutée aux favoris");
-            await interaction.reply({ embeds: [embed], ephemeral: true });
         } else {
             embed.setTitle("❌ Annonce déjà dans les favoris");
-            await interaction.reply({ embeds: [embed], ephemeral: true });
         }
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 };
 
@@ -106,26 +90,15 @@ client.on('interactionCreate', async interaction => {
 
             interaction.editReply({ content: `Salon créé : ${channel}`, ephemeral: true });
 
-            const trackedChannels = await db.get('trackedChannels') || {};
-            trackedChannels[channel.id] = { brand, sort, dep, models, price, mileage };
-            await saveTrackedChannels(trackedChannels);
+            await db.set(`trackedChannels.${channel.id}`, { brand, sort, dep, models, price, mileage });
 
             await sendToDiscord(channel, { brand, sort, dep, models, price, mileage }, new Set(Object.keys(trackedChannels)));
         } else if (commandName === 'unsearch') {
             const channelId = options.getString('channel_id');
-
-            const trackedChannels = await db.get('trackedChannels') || {};
-            if (trackedChannels[channelId]) {
-                delete trackedChannels[channelId];
-                await db.set('trackedChannels', trackedChannels);
-                const channel = client.channels.cache.get(channelId);
-                if (channel) {
-                    await channel.delete();
-                }
-                interaction.editReply({ content: `Le suivi a été arrêté pour le salon : ${channelId}`, ephemeral: true });
-            } else {
-                interaction.editReply({ content: `Aucun suivi trouvé pour le salon : ${channelId}`, ephemeral: true });
-            }
+            await db.del(`trackedChannels.${channelId}`);
+            const channel = await client.channels.fetch(channelId).catch(() => null);
+            if (channel) await channel.delete();
+            interaction.editReply({ content: `Le suivi a été arrêté pour le salon : ${channelId}`, ephemeral: true });
         } else if (commandName === 'listsearches') {
             const trackedChannels = await db.get('trackedChannels') || {};
             const embed = new EmbedBuilder()
@@ -134,7 +107,7 @@ client.on('interactionCreate', async interaction => {
                 .setColor(0x00AE86);
 
             for (const [channelId, info] of Object.entries(trackedChannels)) {
-                const channel = client.channels.cache.get(channelId);
+                const channel = await client.channels.fetch(channelId).catch(() => null);
                 if (channel) {
                     embed.addFields({
                         name: channel.name,
@@ -143,7 +116,6 @@ client.on('interactionCreate', async interaction => {
                     });
                 }
             }
-
             interaction.editReply({ embeds: [embed], ephemeral: true });
         } else if (commandName === 'favoris') {
             const ITEMS_PER_PAGE = 10;
@@ -161,10 +133,9 @@ client.on('interactionCreate', async interaction => {
                 const pageFavorites = favorites.slice(start, end);
 
                 for (const fav of pageFavorites) {
-                    const { listId } = fav;
                     embed.addFields({
-                        name: listId,
-                        value: `ID : ${listId}`
+                        name: fav.listId,
+                        value: `ID : ${fav.listId}`
                     });
                 }
 
@@ -200,14 +171,11 @@ client.on('interactionCreate', async interaction => {
                 }
 
                 const updatedEmbed = await generateEmbed(currentPage);
-
                 await i.update({ embeds: [updatedEmbed], components: [row], ephemeral: true });
             });
 
-            // Clean up the collector after it's done
             collector.on('end', () => {
-                console.log('Collector ended.');
-                // Disable buttons after the collector ends
+                // Désactiver les boutons après la fin de la collection
                 interaction.editReply({ components: [new ActionRowBuilder().addComponents(
                         new ButtonBuilder().setCustomId('previous_fav').setLabel('◀️ Précédent').setStyle(ButtonStyle.Primary).setDisabled(true),
                         new ButtonBuilder().setCustomId('next_fav').setLabel('▶️ Suivant').setStyle(ButtonStyle.Primary).setDisabled(true)
@@ -215,8 +183,7 @@ client.on('interactionCreate', async interaction => {
             });
         } else if (commandName === 'unfav') {
             const favId = options.getString('id');
-
-            let favorites = await db.get('favorites') || [];
+            const favorites = await db.get('favorites') || [];
             const index = favorites.findIndex(fav => fav.id === favId);
             if (index !== -1) {
                 favorites.splice(index, 1);
@@ -228,47 +195,8 @@ client.on('interactionCreate', async interaction => {
         }
     } catch (error) {
         console.error(error);
-        interaction.editReply({ content: 'Une erreur est survenue lors de l\'exécution de la commande.', ephemeral: true });
+        interaction.editReply({ content: "Une erreur est survenue lors de l'exécution de la commande.", ephemeral: true });
     }
 });
 
-(async () => {
-    const commands = [
-        new SlashCommandBuilder()
-            .setName('search')
-            .setDescription('Rechercher des annonces')
-            .addStringOption(option => option.setName('brand').setDescription('La marque du véhicule').setRequired(true))
-            .addStringOption(option => option.setName('sort').setDescription('Critère de tri (ex: time)').setRequired(true))
-            .addStringOption(option => option.setName('departements').setDescription('Choisir les départements').setRequired(false))
-            .addStringOption(option => option.setName('modele').setDescription('Choisir un modèle').setRequired(false))
-            .addStringOption(option => option.setName('prix').setDescription('Choisir une tranche de prix (Ex: 100-1000)').setRequired(false))
-            .addStringOption(option => option.setName('kilometrage').setDescription('Choisir une tranche de kilométrage (Ex: 100-1000)').setRequired(false)),
-        new SlashCommandBuilder()
-            .setName('unsearch')
-            .setDescription('Arrêter de suivre un salon')
-            .addStringOption(option => option.setName('channel_id').setDescription('L\'ID du salon').setRequired(true)),
-        new SlashCommandBuilder()
-            .setName('listsearches')
-            .setDescription('Lister toutes les recherches en cours'),
-        new SlashCommandBuilder()
-            .setName('favoris')
-            .setDescription('Lister toutes les annonces mises en favoris'),
-        new SlashCommandBuilder()
-            .setName('unfav')
-            .setDescription('Retirer une annonce des favoris')
-            .addStringOption(option => option.setName('id').setDescription('L\'ID du favori').setRequired(true))
-    ].map(command => command.toJSON());
-
-    const rest = new REST({ version: '10' }).setToken(token);
-
-    try {
-        console.log('Started refreshing application (/) commands.');
-        await rest.put(Routes.applicationCommands("1271571659047960618"), { body: commands });
-        console.log('Successfully reloaded application (/) commands.');
-    } catch (error) {
-        console.error('Error reloading application (/) commands:', error);
-    }
-})();
-
 client.login(token);
-console.log("LOGGED");

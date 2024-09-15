@@ -2,10 +2,11 @@ const axios = require('axios');
 const cheerio = require("cheerio");
 const { ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder } = require("discord.js");
 const moment = require("moment-timezone");
+const db = require("./db");
 
+// Fonction pour récupérer les données de l'API externe sans conserver de cache
 async function fetchNextData(options) {
     const url = "https://api.zyte.com/v1/extract";
-    console.log(options)
     const depString = options.dep?.map(dep => `d_${dep}`).join(",") || "";
 
     let fetchUrl = `https://www.leboncoin.fr/recherche?category=2`;
@@ -21,7 +22,7 @@ async function fetchNextData(options) {
             "url": fetchUrl,
             "httpResponseBody": true
         }, {
-            auth: { username: 'e9e84e2e189f4acbad4e141a6203aa16' }
+            auth: { username: '92ceaac5e51441e7866d731cfc0c2afd' }
         });
 
         if (response.status !== 200) throw new Error(`HTTP error! status: ${response.status}`);
@@ -36,11 +37,10 @@ async function fetchNextData(options) {
     } catch (error) {
         console.error('Erreur lors de la récupération des données :', error.message);
         return null;
-    } finally {
-        fetchUrl = null
     }
 }
 
+// Fonction pour vérifier la distance en appelant l'API Google Maps sans maintenir de cache
 async function checkDistance(origin, destination) {
     const url = `https://maps.googleapis.com/maps/api/distancematrix/json?units=metric&origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(destination)}&key=AIzaSyDVpX2-v2O1VhGO1TJSHx8K8f2p1iuGd8A`;
 
@@ -58,25 +58,25 @@ async function checkDistance(origin, destination) {
     }
 }
 
+// Fonction principale pour envoyer les données à Discord
 async function sendToDiscord(channel, options, activeSearches) {
-    console.log("new try")
     if (!activeSearches.has(channel.id)) return;
 
-    console.log("HERE 1")
     const brutData = await fetchNextData(options);
     if (!brutData) return;
-    console.log("HERE 2")
 
     const adsData = brutData.props.pageProps.searchData.ads;
     if (!adsData || adsData.length === 0) return;
-    console.log("HERE 3")
     const latestAd = adsData[0];
+
+    // Vérification si l'annonce a déjà été envoyée, sinon on passe à la suivante
     const storedListId = await db.get(`latestData_${channel.id}`);
     if (storedListId === latestAd.list_id) {
         await reload(channel, options, activeSearches);
         return;
     }
 
+    // Mise à jour dans la base de données avec le nouvel ID
     await db.set(`latestData_${channel.id}`, latestAd.list_id);
 
     const {
@@ -100,8 +100,10 @@ async function sendToDiscord(channel, options, activeSearches) {
 
     const getAttributeValue = (key) => attributes.find(attr => attr.key === key)?.value_label || 'Non spécifié';
 
+    // Vérification de la distance entre l'origine et la ville de l'annonce
     const distanceValue = await checkDistance("Sevran", location.city);
 
+    // Création des embeds pour Discord
     const embeds = (images?.urls || []).slice(0, 5).map((url, index) => new EmbedBuilder()
         .setTitle(subject)
         .setURL(`https://www.leboncoin.fr/voitures/${list_id}`)
@@ -123,37 +125,37 @@ async function sendToDiscord(channel, options, activeSearches) {
 
     await channel.send({ embeds, components: [comp] });
 
-    await reload(channel, options, activeSearches).then(()=>{
-        embeds.length = 0;
+    // Nettoyage des variables après envoi du message
+    await reload(channel, options, activeSearches).then(() => {
         options = null;
-        channel = null;
         comp = null;
     });
-
 }
 
+// Formatage du prix
 function formatPrice(price) {
     return price?.toString()?.replace(/\B(?=(\d{3})+(?!\d))/g, " ") || price;
 }
 
+// Fonction pour recharger les données toutes les 45 secondes
 async function reload(channel, options, activeSearches) {
     try {
         await delay(45000);
         await sendToDiscord(channel, options, activeSearches);
     } catch (error) {
         console.error('Erreur lors du rechargement :', error.message);
-        channel = null;
-        options = null;
     } finally {
         channel = null;
         options = null;
     }
 }
 
+// Convertit une date en format Unix
 function toUnix(dateString) {
     return moment.tz(dateString, 'Europe/Paris').unix() || 0;
 }
 
+// Fonction de délai pour les rechargements
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
